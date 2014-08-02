@@ -17,6 +17,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 using Lucene.Net.Documents;
@@ -31,7 +32,18 @@ namespace Lucene.Net.Search.Vectorhighlight
 {
     public abstract class BaseFragmentsBuilder : FragmentsBuilder
     {
-        protected String[] preTags, postTags;
+		class Fragment
+		{
+			public Fragment(WeightedFragInfo fragInfo)
+			{
+				FragInfo = fragInfo;
+			}
+
+			public readonly WeightedFragInfo FragInfo;
+			public string Text;
+		}
+
+		protected String[] preTags, postTags;
         public static String[] COLORED_PRE_TAGS = {
             "<b style=\"background:yellow\">", "<b style=\"background:lawngreen\">", "<b style=\"background:aquamarine\">",
             "<b style=\"background:magenta\">", "<b style=\"background:palegreen\">", "<b style=\"background:coral\">",
@@ -43,6 +55,8 @@ namespace Lucene.Net.Search.Vectorhighlight
         };
 
         public static String[] COLORED_POST_TAGS = { "</b>" };
+
+    	private IFragmentSourceProvider _fragmentSourceProvider = new StoredFieldFragmentSourceProvider();
 
         protected BaseFragmentsBuilder()
             : this(new String[] { "<b>" }, new String[] { "</b>" })
@@ -63,6 +77,12 @@ namespace Lucene.Net.Search.Vectorhighlight
             throw new ArgumentException("type of preTags/postTags must be a String or String[]");
         }
 
+    	public IFragmentSourceProvider FragmentSourceProvider
+    	{
+			get { return _fragmentSourceProvider; }
+			set { _fragmentSourceProvider = value ?? new StoredFieldFragmentSourceProvider(); }
+    	}
+
         public abstract List<WeightedFragInfo> GetWeightedFragInfoList(List<WeightedFragInfo> src);
 
         public virtual String CreateFragment(IndexReader reader, int docId, String fieldName, FieldFragList fieldFragList)
@@ -77,49 +97,35 @@ namespace Lucene.Net.Search.Vectorhighlight
             if (maxNumFragments < 0)
                 throw new ArgumentException("maxNumFragments(" + maxNumFragments + ") must be positive number.");
 
-            List<WeightedFragInfo> fragInfos = GetWeightedFragInfoList(fieldFragList.fragInfos);
+        	using(var fragmentSource = _fragmentSourceProvider.GetFragmentSource(reader, docId, fieldName))
+        	{
+				if (fragmentSource.IsEmpty)
+					return null;
 
-            List<String> fragments = new List<String>(maxNumFragments);
-            Field[] values = GetFields(reader, docId, fieldName);
-            if (values.Length == 0) return null;
-            StringBuilder buffer = new StringBuilder();
-            int[] nextValueIndex = { 0 };
-            for (int n = 0; n < maxNumFragments && n < fragInfos.Count; n++)
-            {
-                WeightedFragInfo fragInfo = fragInfos[n];
-                fragments.Add(MakeFragment(buffer, nextValueIndex, values, fragInfo));
-            }
-            return fragments.ToArray();
+				// determine the set of fragments to be created
+				var fragments = GetWeightedFragInfoList(fieldFragList.fragInfos)
+					.Select(fragInfo => new Fragment(fragInfo))
+					.Take(maxNumFragments)
+					.ToArray();
+
+				// process the fragments in order of StartOffset (as opposed to weight),
+				// so that the fragmentSource implementation can be forward-only
+				foreach (var fragment in fragments.OrderBy(f => f.FragInfo.StartOffset))
+				{
+					fragment.Text = MakeFragment(fragmentSource, fragment.FragInfo);
+				}
+
+				return fragments.Select(f => f.Text).ToArray();
+			}
         }
 
-        [Obsolete]
-        protected virtual String[] GetFieldValues(IndexReader reader, int docId, String fieldName)
-        {
-            Document doc = reader.Document(docId, new MapFieldSelector(new String[] { fieldName }));
-            return doc.GetValues(fieldName); // according to Document class javadoc, this never returns null
-        }
+		protected virtual String MakeFragment(IFragmentSource fragmentSource, WeightedFragInfo fragInfo)
+		{
+			var s = fragInfo.startOffset;
+			return MakeFragment(fragInfo, GetFragmentSource(fragmentSource, s, fragInfo.endOffset), s);
+		}
 
-        protected virtual Field[] GetFields(IndexReader reader, int docId, String fieldName)
-        {
-            // according to javadoc, doc.getFields(fieldName) cannot be used with lazy loaded field???
-            Document doc = reader.Document(docId, new MapFieldSelector(new String[] { fieldName }));
-            return doc.GetFields(fieldName); // according to Document class javadoc, this never returns null
-        }
-
-        [Obsolete]
-        protected virtual String MakeFragment(StringBuilder buffer, int[] index, String[] values, WeightedFragInfo fragInfo)
-        {
-            int s = fragInfo.startOffset;
-            return MakeFragment(fragInfo, GetFragmentSource(buffer, index, values, s, fragInfo.endOffset), s);
-        }
-
-        protected virtual String MakeFragment(StringBuilder buffer, int[] index, Field[] values, WeightedFragInfo fragInfo)
-        {
-            int s = fragInfo.startOffset;
-            return MakeFragment(fragInfo, GetFragmentSource(buffer, index, values, s, fragInfo.endOffset), s);
-        }
-
-        private String MakeFragment(WeightedFragInfo fragInfo, String src, int s)
+		protected virtual String MakeFragment(WeightedFragInfo fragInfo, String src, int s)
         {
             StringBuilder fragment = new StringBuilder();
             int srcIndex = 0;
@@ -136,55 +142,11 @@ namespace Lucene.Net.Search.Vectorhighlight
             return fragment.ToString();
         }
 
-        /*
-        [Obsolete]
-        protected String MakeFragment(StringBuilder buffer, int[] index, String[] values, WeightedFragInfo fragInfo)
-        {
-            StringBuilder fragment = new StringBuilder();
-            int s = fragInfo.startOffset;
-            String src = GetFragmentSource(buffer, index, values, s, fragInfo.endOffset);
-            int srcIndex = 0;
-            foreach (SubInfo subInfo in fragInfo.subInfos)
-            {
-                foreach (Toffs to in subInfo.termsOffsets)
-                {
-                    fragment.Append(src.Substring(srcIndex, to.startOffset - s - srcIndex)).Append(GetPreTag(subInfo.seqnum))
-                      .Append(src.Substring(to.startOffset - s, to.endOffset - s - (to.startOffset - s))).Append(GetPostTag(subInfo.seqnum));
-                    srcIndex = to.endOffset - s;
-                }
-            }
-            fragment.Append(src.Substring(srcIndex));
-            return fragment.ToString();
-        }
-        */
-
-
-        [Obsolete]
-        protected virtual String GetFragmentSource(StringBuilder buffer, int[] index, String[] values, int startOffset, int endOffset)
-        {
-            while (buffer.Length < endOffset && index[0] < values.Length)
-            {
-                buffer.Append(values[index[0]]);
-                if (values[index[0]].Length > 0 && index[0] + 1 < values.Length)
-                    buffer.Append(' ');
-                index[0]++;
-            }
-            int eo = buffer.Length < endOffset ? buffer.Length : endOffset;
-            return buffer.ToString().Substring(startOffset, eo - startOffset);
-        }
-
-        protected virtual String GetFragmentSource(StringBuilder buffer, int[] index, Field[] values, int startOffset, int endOffset)
-        {
-            while (buffer.Length < endOffset && index[0] < values.Length)
-            {
-                buffer.Append(values[index[0]].StringValue);
-                if (values[index[0]].IsTokenized && values[index[0]].StringValue.Length > 0 && index[0] + 1 < values.Length)
-                    buffer.Append(' ');
-                index[0]++;
-            }
-            int eo = buffer.Length < endOffset ? buffer.Length : endOffset;
-            return buffer.ToString().Substring(startOffset, eo - startOffset);
-        }
+		protected virtual String GetFragmentSource(IFragmentSource fragmentSource, int startOffset, int endOffset)
+		{
+			var len = endOffset - startOffset;
+			return fragmentSource.GetText(startOffset, ref len);
+		}
 
         protected virtual String GetPreTag(int num)
         {

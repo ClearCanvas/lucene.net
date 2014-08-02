@@ -80,6 +80,26 @@ namespace Lucene.Net.Search.Vectorhighlight
                 }
             }
 
+        	public int StartOffset
+        	{
+				get { return startOffset; }
+        	}
+
+        	public int EndOffset
+        	{
+				get { return endOffset; }
+        	}
+
+        	public float TotalBoost
+        	{
+				get { return totalBoost; }
+        	}
+
+        	public IEnumerable<SubInfo> SubInfos
+        	{
+				get { return subInfos; }
+        	}
+
             public override string ToString()
             {
                 StringBuilder sb = new StringBuilder();
@@ -90,7 +110,7 @@ namespace Lucene.Net.Search.Vectorhighlight
                 return sb.ToString();
             }
 
-            internal class SubInfo
+            public class SubInfo
             {
                 internal String text;  // unnecessary member, just exists for debugging purpose
                 internal List<Toffs> termsOffsets;   // usually termsOffsets.size() == 1,
@@ -102,6 +122,16 @@ namespace Lucene.Net.Search.Vectorhighlight
                     this.termsOffsets = termsOffsets;
                     this.seqnum = seqnum;
                 }
+
+            	public int SequenceNumber
+            	{
+					get { return seqnum; }
+            	}
+
+            	public IEnumerable<Toffs> TermsOffsets
+            	{
+					get { return termsOffsets; }
+            	}
 
                 public override string ToString()
                 {

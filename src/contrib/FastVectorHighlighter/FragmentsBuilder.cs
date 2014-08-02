@@ -31,6 +31,11 @@ namespace Lucene.Net.Search.Vectorhighlight
     /// </summary>
     public interface FragmentsBuilder
     {
+		/// <summary>
+		/// Gets or sets an objects that provides the source text used in fragment building.
+		/// </summary>
+		IFragmentSourceProvider FragmentSourceProvider { get; set; }
+
         /// <summary>
         /// create a fragment.
         /// </summary>

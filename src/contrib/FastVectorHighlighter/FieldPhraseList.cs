@@ -217,6 +217,17 @@ namespace Lucene.Net.Search.Vectorhighlight
                     this.startOffset = startOffset;
                     this.endOffset = endOffset;
                 }
+
+            	public int StartOffset
+            	{
+					get { return startOffset; }
+            	}
+
+            	public int EndOffset
+            	{
+					get { return endOffset; }
+            	}
+
                 internal void SetEndOffset(int endOffset)
                 {
                     this.endOffset = endOffset;
